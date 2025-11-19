@@ -412,16 +412,18 @@ io.on('connection', (socket) => {
                 attempted: attemptedArray
             });
 
-            // If everyone has now attempted this question, auto-advance to next question
+             // === FINAL FIXED VERSION – ONLY TRIGGER "EVERYONE WRONG" ONCE ===
             const numPlayers = party.players.length;
-            if (party.gameState.attempted.size >= numPlayers) {
-                console.log(`[Server] All players attempted question in party ${partyCode} - showing time up`);
+            if (party.gameState.attempted.size >= numPlayers && !party.gameState.allAttemptedHandled) {
+                party.gameState.allAttemptedHandled = true;  // ← THIS PREVENTS DUPLICATE ADVANCES
+
+                console.log(`[Server] Everyone got it wrong in party ${partyCode} → auto-advancing once`);
                 party.pendingAdvanceTimeout = setTimeout(() => {
                     io.to(`party:${partyCode}`).emit('time_up');
                     party.pendingAdvanceTimeout = setTimeout(() => {
                         advanceToNextQuestion(partyCode);
-                    }, 5000);  // 5 seconds after Time's Up screen
-                }, 1800);  // 1.8 seconds after last INCORRECT
+                    }, 3200);
+                }, 1800);
             }
         }
     });
