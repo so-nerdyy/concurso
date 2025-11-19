@@ -8,7 +8,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
     cors: {
-        origin: "*",   // <--- ALLOWS EVERYONE
+        origin: true,   // <--- ALLOWS EVERYONE
         methods: ['GET', 'POST'],
         allowEIO3: true
     }
@@ -111,8 +111,8 @@ io.on('connection', (socket) => {
             return callback({ success: false, error: 'Party not found' });
         }
 
-        if (party.players.length >= 8) {
-            return callback({ success: false, error: 'Party is full (max 8 players)' });
+        if (party.players.length >= 10) {
+            return callback({ success: false, error: 'Party is full (max 10 players)' });
         }
 
         // Check if name already exists
@@ -141,6 +141,41 @@ io.on('connection', (socket) => {
             players: party.players,
             gameState: party.gameState
         });
+
+        // === ADD THIS BLOCK inside socket.on('join_party', ...) after the party_updated emit ===
+        if (party.gameState && party.gameState.status === 'active') {
+            // Send the full current game state to the new player only
+            const currentQ = party.questions[party.currentQuestionIndex];
+            if (currentQ) {
+                const cleanQuestion = currentQ.question.replace(/<[^>]*>/g, '');
+                socket.emit('game_started', {
+                    partyCode,
+                    questions: party.questions,
+                    settings: party.settings
+                });
+                socket.emit('next_question', {
+                    questionIndex: party.currentQuestionIndex
+                });
+                // Send current reading progress so they see the same text
+                socket.emit('reading_progress', { charIndex: cleanQuestion.length });
+                // If someone already buzzed, tell the new player
+                if (party.gameState.buzzedPlayerId) {
+                    const buzzedPlayer = getPlayer(partyCode, party.gameState.buzzedPlayerId);
+                    socket.emit('player_buzzed', {
+                        playerId: party.gameState.buzzedPlayerId,
+                        playerName: buzzedPlayer?.name || 'Unknown',
+                        buzzPoint: party.gameState.buzzPoint || 0
+                    });
+                }
+                // If buzz is unlocked after incorrect, tell them who is excluded
+                if (!party.gameState.buzzedPlayerId && party.gameState.attempted && party.gameState.attempted.size > 0) {
+                    socket.emit('buzz_unlocked', {
+                        excludedPlayerId: Array.from(party.gameState.attempted)[party.gameState.attempted.size - 1],
+                        attempted: Array.from(party.gameState.attempted)
+                    });
+                }
+            }
+        }
     });
 
     // Leave party
@@ -221,7 +256,8 @@ io.on('connection', (socket) => {
             attempted: new Set(),
             lastIncorrectPlayerId: null, // legacy single-last incorrect (kept for compatibility)
             startTime: Date.now(),
-            buzzLocked: false
+            buzzLocked: false,
+            allAttemptedHandled: false
         };
         party.pendingAdvanceTimeout = null; 
 
@@ -406,6 +442,7 @@ io.on('connection', (socket) => {
         party.gameState.attempted = new Set();
         party.gameState.lastIncorrectPlayerId = null;
         party.gameState.buzzLocked = false;
+        party.gameState.allAttemptedHandled = false;  // <-- ADD THIS LINE
 
         if (party.currentQuestionIndex >= party.questions.length) {
             party.gameState.status = 'finished';
